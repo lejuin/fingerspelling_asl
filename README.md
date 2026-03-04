@@ -16,6 +16,11 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Setup rápido (automático):
+```powershell
+.\setup.ps1
+```
+
 ### Linux
 ```bash
 python3 -m venv .venv
@@ -78,3 +83,8 @@ gcloud compute scp --zone=us-central1-b --project=buoyant-purpose-479417-t8 `
   instance-fingerspeling:~/fingerspelling_asl/artifacts/models/archcmp2_tcn_bilstm_full_20260303_best.pt `
   .\artifacts\models\
 ```
+
+## 8) Troubleshooting
+Guía rápida de errores frecuentes:
+
+`docs/TROUBLESHOOTING.md`
