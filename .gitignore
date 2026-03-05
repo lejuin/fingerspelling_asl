@@ -13,6 +13,8 @@ venv/
 # Data (heavy)
 data/
 *.parquet
+!src/data/
+!src/data/*.py
 
 # Training artifacts
 artifacts/models/
