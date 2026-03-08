@@ -1,15 +1,39 @@
+import json
+import re
+from typing import Dict, Tuple
 
-# Vocab: 59 chars + <blank> = 60 total
+CTC_BLANK_ID = 0
 
-original_chars = list("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$%")
+# Only lowercase letters and space are valid for fingerspelling.
+ALLOWED_CHARS = set("abcdefghijklmnopqrstuvwxyz ")
 
-original_letter_to_int = {c: i for i, c in enumerate(original_chars)}
 
-# Add blank at 0
-letter_to_int = {k: v + 1 for k, v in original_letter_to_int.items()}
-letter_to_int["<blank>"] = 0
+def normalize_phrase(phrase: str) -> str:
+    """Lowercase and strip anything that is not a-z or space."""
+    text = str(phrase).lower()
+    text = re.sub(r"[^a-z ]", "", text)
+    # Collapse multiple spaces and strip edges.
+    return re.sub(r" +", " ", text).strip()
 
-int_to_letter = {v: k for k, v in letter_to_int.items()}
 
-vocab_size = len(letter_to_int)
-blank_id = 0
+def encode_phrase(phrase: str, char_to_idx: Dict[str, int]) -> list:
+    """Encode a raw phrase: normalize first, then map to indices."""
+    clean = normalize_phrase(phrase)
+    return [char_to_idx[c] for c in clean if c in char_to_idx]
+
+
+def build_ctc_vocab(vocab_json_path: str) -> Tuple[Dict[str, int], Dict[int, str], int]:
+    """Load Kaggle vocab JSON and keep only lowercase letters + space.
+
+    Returns (char_to_idx, idx_to_char, blank_id).
+    Index 0 is always reserved for CTC blank.
+    """
+    with open(vocab_json_path, "r", encoding="utf-8") as f:
+        raw = {k: int(v) for k, v in json.load(f).items()}
+
+    # Filter to allowed chars only, then re-index starting at 1 (0 = blank).
+    allowed_sorted = sorted(k for k in raw if k in ALLOWED_CHARS)
+    char_to_idx = {c: i + 1 for i, c in enumerate(allowed_sorted)}
+
+    idx_to_char = {v: k for k, v in char_to_idx.items()}
+    return char_to_idx, idx_to_char, CTC_BLANK_ID

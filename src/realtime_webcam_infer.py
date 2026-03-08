@@ -1,5 +1,4 @@
 import argparse
-import json
 import math
 import time
 from collections import deque
@@ -13,9 +12,8 @@ import torch
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
+from src.data.vocab import build_ctc_vocab, CTC_BLANK_ID
 from src.model_loader import load_model_from_checkpoint
-
-CTC_BLANK_ID = 0
 MP_HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),
     (0, 5), (5, 6), (6, 7), (7, 8),
@@ -27,18 +25,7 @@ MP_HAND_CONNECTIONS = [
 
 
 def load_vocab(vocab_json_path: str) -> Tuple[Dict[str, int], Dict[int, str], int]:
-    with open(vocab_json_path, "r", encoding="utf-8") as f:
-        base_char_to_idx = {k: int(v) for k, v in json.load(f).items()}
-
-    if "<blank>" in base_char_to_idx:
-        blank_id = int(base_char_to_idx["<blank>"])
-        char_to_idx = base_char_to_idx
-    else:
-        blank_id = CTC_BLANK_ID
-        char_to_idx = {k: v + 1 for k, v in base_char_to_idx.items()}
-
-    idx2char = {int(v): k for k, v in char_to_idx.items()}
-    return char_to_idx, idx2char, blank_id
+    return build_ctc_vocab(vocab_json_path)
 
 
 def ctc_decode_text(log_probs: torch.Tensor, idx2char: Dict[int, str], blank_id: int) -> str:

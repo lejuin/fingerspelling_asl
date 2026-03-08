@@ -10,37 +10,18 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import re
 
 try:
     import wandb
 except ImportError:
     wandb = None
 
+from src.models.tcn_bilstm import TCNBiRNN
 from src.models.embedded_rnn import EmbeddedRNN
 from src.data.dataset import ASLRightHandDataset, collate_fn
+from src.data.vocab import build_ctc_vocab, encode_phrase
 from src.utils.metrics import evaluate_metrics, ctc_greedy_decode
-
-CTC_BLANK_ID = 0
-
-
-def encode_phrase(phrase: str, letter_to_int: dict) -> list:
-    return [letter_to_int[c] for c in phrase if c in letter_to_int]
-
-
-def build_ctc_vocab(vocab_json_path: str):
-    with open(vocab_json_path, "r", encoding="utf-8") as f:
-        base_char_to_idx = {k: int(v) for k, v in json.load(f).items()}
-
-    if "<blank>" in base_char_to_idx:
-        blank_id = int(base_char_to_idx["<blank>"])
-        char_to_idx = base_char_to_idx
-    else:
-        blank_id = CTC_BLANK_ID
-        # Reserve 0 for CTC blank and shift labels by +1
-        char_to_idx = {k: v + 1 for k, v in base_char_to_idx.items()}
-
-    idx_to_char = {int(v): k for k, v in char_to_idx.items()}
-    return char_to_idx, idx_to_char, blank_id
 
 
 def split_by_participant(df: pd.DataFrame, val_ratio: float = 0.2, seed: int = 42):
@@ -94,7 +75,7 @@ def collect_gt_pred_examples(
 
             X, Y, input_lens, target_lens = batch
             X = X.to(device)
-            outputs = model(X)  # (T, B, C)
+            outputs = model(X, input_lens)  # (T, B, C)
             batch_size = outputs.shape[1]
             y_list = Y.detach().cpu().tolist()
 
@@ -160,11 +141,20 @@ def main():
     p.add_argument("--epochs", type=int, default=5)
     p.add_argument("--batch_size", type=int, default=4)
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--hidden_dim", type=int, default=128)
+    p.add_argument("--hidden_dim", type=int, default=256)
+    p.add_argument("--proj_dim", type=int, default=128)
+    p.add_argument("--tcn_kernels", type=str, default="3,3,3", help="Comma-separated kernel sizes for TCN blocks")
+    p.add_argument("--rnn_layers", type=int, default=2)
+    p.add_argument("--rnn_type", type=str, default="lstm", choices=["lstm", "gru", "rnn"])
     p.add_argument("--val_ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_size", type=int, default=200)  # small by default
     p.add_argument("--val_size", type=int, default=200)
+    p.add_argument(
+          "--use_supplemental",
+          action="store_true",
+          help="Also load supplemental_metadata.csv + supplemental_landmarks/.",
+    )
     p.add_argument(
         "--max_phrase_len",
         type=int,
@@ -229,6 +219,48 @@ def main():
         )
     df = df[df["file_id"].isin(have_ids)].copy()
     print(f"Rows after filtering to available parquets ({len(have_ids)} file_ids): {len(df)}")
+
+    if args.use_supplemental:
+        supp_csv = os.path.join(args.data_dir, "supplemental_metadata.csv")
+        supp_landmarks = os.path.join(args.data_dir, "supplemental_landmarks")
+        if os.path.exists(supp_csv) and os.path.isdir(supp_landmarks):
+          supp_df = pd.read_csv(supp_csv)
+          supp_have = existing_file_ids(supp_landmarks)
+          supp_df = supp_df[supp_df["file_id"].isin(supp_have)].copy()
+          supp_df["_landmarks_dir"] = supp_landmarks
+          print(f"Supplemental rows: {len(supp_df)} ({len(supp_have)} file_ids)")
+          df["_landmarks_dir"] = landmarks_dir
+          df = pd.concat([df, supp_df], ignore_index=True)
+          print(f"Combined total rows: {len(df)}")
+        else:
+          print(f"Warning: supplemental data not found at {supp_csv}, skipping")
+
+    _clean_re = re.compile(r'^[a-z ]+$')
+    df["phrase"] = df["phrase"].astype(str).str.lower().str.strip()
+    df = df[df["phrase"].apply(lambda x: bool(_clean_re.match(x)) and len(x) > 0)].copy()
+    print(f"Rows after filtering to letters-only phrases: {len(df)}")
+
+    # Pre-filter: remove sequences with no right-hand data (all NaN).
+    # These are left-hand signers or detection failures — waste of training time.
+    from src.data.dataset import read_right_hand_sequence, count_valid_frames
+    print("Pre-filtering sequences with no right-hand landmarks...")
+    valid_mask = []
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Checking landmarks", leave=False):
+        fid = int(row["file_id"])
+        sid = int(row["sequence_id"])
+        lm_dir = landmarks_dir
+        if "_landmarks_dir" in row.index:
+            lm_dir = row["_landmarks_dir"]
+        ppath = os.path.join(lm_dir, f"{fid}.parquet")
+        if not os.path.exists(ppath):
+            valid_mask.append(False)
+            continue
+        X_raw = read_right_hand_sequence(ppath, sid)
+        n_valid = count_valid_frames(X_raw)
+        valid_mask.append(n_valid > 0)
+    df = df[valid_mask].copy()
+    print(f"Rows after filtering no-data sequences: {len(df)}")
+
     if args.max_phrase_len > 0:
         df = df[df["phrase"].astype(str).str.len() <= args.max_phrase_len].copy()
         print(f"Rows after filtering by max_phrase_len={args.max_phrase_len}: {len(df)}")
@@ -259,23 +291,23 @@ def main():
     print(f"Train samples: {len(train_df)} | Val samples: {len(val_df)}")
 
     # Datasets / loaders
-    train_ds = ASLRightHandDataset(train_df, landmarks_dir=landmarks_dir, max_frames=args.max_frames)
-    val_ds = ASLRightHandDataset(val_df, landmarks_dir=landmarks_dir, max_frames=args.max_frames)
+    train_ds = ASLRightHandDataset(train_df, landmarks_dir=landmarks_dir, max_frames=args.max_frames, use_per_row_dir=args.use_supplemental, training=True)
+    val_ds = ASLRightHandDataset(val_df, landmarks_dir=landmarks_dir, max_frames=args.max_frames, use_per_row_dir=args.use_supplemental, training=False)
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=0)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=0)
 
     # Model
-    # Right-hand features are typically 21 landmarks * 3 coords = 63
     input_dim = 63
-    hidden_dim = args.hidden_dim
-    # output_dim must match max id + 1 (including blank=0)
     output_dim = max(int_to_letter.keys()) + 1
 
-    model = EmbeddedRNN(input_dim, hidden_dim, output_dim).to(device)
+    model = EmbeddedRNN(input_dim, args.hidden_dim, output_dim).to(device)
 
     criterion = nn.CTCLoss(blank=blank_id, zero_infinity=True)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3,
+    )
 
     # Tracking setup
     run_name = args.run_name or datetime.now().strftime("run_%Y%m%d_%H%M%S")
@@ -316,10 +348,17 @@ def main():
             X = X.to(device)
 
             optimizer.zero_grad()
-            log_probs = model(X)  # (T, B, C)
+            log_probs = model(X, in_lens)  # (T, B, C)
 
             loss = criterion(log_probs, Y, in_lens, tar_lens)
+
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"WARNING: skipping batch with loss={loss.item()}")
+                optimizer.zero_grad()
+                continue
+
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
 
             # Simple diagnostics: blank-token dominance and input/target length ratio.
@@ -370,6 +409,7 @@ def main():
             device=device,
             blank_id=blank_id,
         )
+        scheduler.step(mean_loss)
         writer.add_scalar("cer/val", metrics["cer"], epoch)
         writer.add_scalar("wer/val", metrics["wer"], epoch)
         writer.add_scalar("sequence_accuracy/val", metrics["sequence_accuracy"], epoch)

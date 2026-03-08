@@ -1,17 +1,14 @@
 import os
 import ast
-import json
 import argparse
-import warnings
 
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader
 
 from src.data.dataset import ASLRightHandDataset, collate_fn
+from src.data.vocab import build_ctc_vocab, encode_phrase, CTC_BLANK_ID
 from src.model_loader import load_model_from_checkpoint
-
-CTC_BLANK_ID = 0
 
 
 # ---------------------------------------------------------
@@ -46,17 +43,6 @@ def greedy_decode_batch(log_probs, idx2char, blank_id=0, input_lens=None):
     return decoded_strings
 
 
-def encode_phrase(phrase, char_to_idx):
-    phrase_str = str(phrase)
-    encoded = []
-    for c in phrase_str:
-        if c in char_to_idx:
-            encoded.append(char_to_idx[c])
-        elif not c.isspace():
-            warnings.warn(f"Caracter '{c}' no encontrado en vocabulario, omitido en: {phrase_str!r}")
-    return encoded
-
-
 def parse_encoded(value):
     if isinstance(value, list):
         return value
@@ -85,19 +71,7 @@ def load_vocab(args):
             f"No encuentro vocabulario JSON: {vocab_path}. Usa --vocab_json para indicarlo."
         )
 
-    with open(vocab_path, "r", encoding="utf-8") as f:
-        base_char_to_idx = {k: int(v) for k, v in json.load(f).items()}
-
-    if "<blank>" in base_char_to_idx:
-        blank_id = int(base_char_to_idx["<blank>"])
-        char_to_idx = base_char_to_idx
-    else:
-        blank_id = CTC_BLANK_ID
-        # Reserve 0 for CTC blank and shift labels by +1
-        char_to_idx = {k: v + 1 for k, v in base_char_to_idx.items()}
-
-    idx2char = {int(v): k for k, v in char_to_idx.items()}
-    return char_to_idx, idx2char, blank_id
+    return build_ctc_vocab(vocab_path)
 
 
 def _project_root():

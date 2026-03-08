@@ -4,7 +4,9 @@ import torch
 from torchmetrics.text import CharErrorRate
 
 
-def ctc_greedy_decode(log_probs: torch.Tensor, int_to_letter: Dict[int, str], blank_id: int = 0) -> str:
+def ctc_greedy_decode(
+    log_probs: torch.Tensor, int_to_letter: Dict[int, str], blank_id: int = 0
+) -> str:
     """
     log_probs: (T, C) for a single sample.
     Greedy decode with CTC collapsing + blank removal.
@@ -40,9 +42,9 @@ def _levenshtein_distance(a: Sequence, b: Sequence) -> int:
             bj = b[j - 1]
             cost = 0 if ai == bj else 1
             curr[j] = min(
-                prev[j] + 1,       # deletion
-                curr[j - 1] + 1,   # insertion
-                prev[j - 1] + cost # substitution / match
+                prev[j] + 1,  # deletion
+                curr[j - 1] + 1,  # insertion
+                prev[j - 1] + cost,  # substitution / match
             )
         prev, curr = curr, prev
     return prev[m]
@@ -64,7 +66,7 @@ def _collect_predictions_and_targets(
         X, Y, input_lens, target_lens = batch
         X = X.to(device)
 
-        outputs = model(X)  # (T, B, C)
+        outputs = model(X, input_lens)  # (T, B, C)
         B = outputs.shape[1]
         Y_list = Y.detach().cpu().tolist()
 
@@ -72,11 +74,13 @@ def _collect_predictions_and_targets(
         for i in range(B):
             # Decode prediction
             valid_t = int(input_lens[i].item())
-            pred_text = ctc_greedy_decode(outputs[:valid_t, i, :], int_to_letter, blank_id)
+            pred_text = ctc_greedy_decode(
+                outputs[:valid_t, i, :], int_to_letter, blank_id
+            )
 
             # Decode target
             tl = int(target_lens[i].item())
-            tgt_ids = Y_list[start:start + tl]
+            tgt_ids = Y_list[start : start + tl]
             start += tl
             tgt_text = "".join(int_to_letter[int(t)] for t in tgt_ids)
 
@@ -104,12 +108,20 @@ def _compute_wer(preds: List[str], targets: List[str]) -> float:
 def _compute_average_edit_distance(preds: List[str], targets: List[str]) -> float:
     if len(preds) == 0:
         return float("nan")
-    distances = [_levenshtein_distance(pred, target) for pred, target in zip(preds, targets)]
+    distances = [
+        _levenshtein_distance(pred, target) for pred, target in zip(preds, targets)
+    ]
     return float(sum(distances) / len(distances))
 
 
 @torch.no_grad()
-def evaluate_cer(model, dataloader, int_to_letter: Dict[int, str], device: torch.device, blank_id: int = 0) -> float:
+def evaluate_cer(
+    model,
+    dataloader,
+    int_to_letter: Dict[int, str],
+    device: torch.device,
+    blank_id: int = 0,
+) -> float:
     model.eval()
     cer = CharErrorRate()
     preds, targets = _collect_predictions_and_targets(

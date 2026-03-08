@@ -38,6 +38,18 @@ def read_right_hand_sequence(parquet_path: str, sequence_id: int) -> np.ndarray:
     X = table.to_pandas().values.astype(np.float32)  # (T, D)
     return X
 
+def compute_pairwise_distances(X: np.ndarray) -> np.ndarray:
+    """Compute distances between fingertips. X shape: (T, 63) -> returns (T, 10)."""
+    T = X.shape[0]
+    pts = X.reshape(T, 21, 3)
+    tips = [4, 8, 12, 16, 20]  # thumb, index, middle, ring, pinky tips
+    dists = []
+    for i in range(len(tips)):
+      for j in range(i + 1, len(tips)):
+          d = np.linalg.norm(pts[:, tips[i], :] - pts[:, tips[j], :], axis=1)
+          dists.append(d)
+    return np.stack(dists, axis=1).astype(np.float32)  # (T, 10)
+
 def count_valid_frames(X: np.ndarray) -> int:
     # A frame is valid if not all values are NaN
     return int(np.sum(~np.all(np.isnan(X), axis=1)))
@@ -56,51 +68,116 @@ def normalize_frames(X: np.ndarray, max_frames: int) -> np.ndarray:
     return X
 
 class ASLRightHandDataset(Dataset):
+      """
+      Each item:
+        X: (max_frames, D) float32
+        Y: (U,) long (targets)
+        input_len: int (valid frames before padding/trunc)
+        target_len: int (U)
+      """
+      def __init__(
+          self,
+          df: pd.DataFrame,
+          landmarks_dir: str,
+          max_frames: int = MAX_FRAMES_DEFAULT,
+          use_per_row_dir: bool = False,
+          training: bool = False,
+      ):
+          self.df = df.reset_index(drop=True)
+          self.landmarks_dir = landmarks_dir
+          self.max_frames = max_frames
+          self.use_per_row_dir = use_per_row_dir
+          self.training = training
+
+      def __len__(self) -> int:
+          return len(self.df)
+
+      def __getitem__(self, idx: int):
+          row = self.df.iloc[idx]
+          file_id = int(row["file_id"])
+          sequence_id = int(row["sequence_id"])
+
+          if self.use_per_row_dir and "_landmarks_dir" in row.index:
+              lm_dir = row["_landmarks_dir"]
+          else:
+              lm_dir = self.landmarks_dir
+
+          parquet_path = os.path.join(lm_dir, f"{file_id}.parquet")
+          if not os.path.exists(parquet_path):
+              return None
+
+          X_raw = read_right_hand_sequence(parquet_path, sequence_id)  # (T, D)
+
+          # Drop frames where ALL landmarks are NaN (hand not detected).
+          # Keeping them would feed all-zeros to the model and waste CTC steps.
+          valid_mask = ~np.all(np.isnan(X_raw), axis=1)
+          X_clean = X_raw[valid_mask]
+
+          if len(X_clean) == 0:
+              return None
+
+          input_len = min(len(X_clean), self.max_frames)
+
+          X = normalize_frames(X_clean, self.max_frames)
+          # Zero remaining per-landmark NaN (rare: frame detected but one landmark missing)
+          X = np.nan_to_num(X, nan=0.0)
+          X = normalize_landmarks(X)
+          Y = torch.tensor(row["encoded"], dtype=torch.long)
+          target_len = int(len(Y))
+
+          if input_len < target_len or target_len == 0:
+              return None
+
+          X = torch.tensor(X, dtype=torch.float32)
+
+          return X, Y, int(min(input_len, self.max_frames)), target_len
+
+def augment(X: np.ndarray) -> np.ndarray:
+    """Simple data augmentation for training."""
+    # Time flip: reverse sequence
+    if np.random.random() < 0.5:
+      X = X[::-1].copy()
+
+    # Temporal resample: stretch/compress
+    if np.random.random() < 0.5:
+      T = X.shape[0]
+      scale = np.random.uniform(0.7, 1.3)
+      new_T = max(1, int(T * scale))
+      indices = np.linspace(0, T - 1, new_T).astype(int)
+      X = X[indices]
+
+    # Random spatial shift
+    if np.random.random() < 0.5:
+      shift = np.random.normal(0, 0.05, size=(1, X.shape[1])).astype(np.float32)
+      X = X + shift
+
+    return X
+
+def normalize_landmarks(X: np.ndarray) -> np.ndarray:
+    """Center landmarks on wrist and scale by max absolute x/y value.
+
+    X shape: (T, 63) — columns are laid out as:
+      x_hand_0..x_hand_20, y_hand_0..y_hand_20, z_hand_0..z_hand_20
+    (all x first, then all y, then all z).
     """
-    Each item:
-      X: (max_frames, D) float32
-      Y: (U,) long (targets)
-      input_len: int (valid frames before padding/trunc)
-      target_len: int (U)
-    """
-    def __init__(
-        self,
-        df: pd.DataFrame,
-        landmarks_dir: str,
-        max_frames: int = MAX_FRAMES_DEFAULT,
-    ):
-        self.df = df.reset_index(drop=True)
-        self.landmarks_dir = landmarks_dir
-        self.max_frames = max_frames
+    T = X.shape[0]
+    xs = X[:, :21].copy()     # (T, 21)
+    ys = X[:, 21:42].copy()   # (T, 21)
+    zs = X[:, 42:63].copy()   # (T, 21)
 
-    def __len__(self) -> int:
-        return len(self.df)
+    # Center: subtract wrist (landmark 0) per frame
+    xs -= xs[:, 0:1]
+    ys -= ys[:, 0:1]
+    zs -= zs[:, 0:1]
 
-    def __getitem__(self, idx: int):
-        row = self.df.iloc[idx]
-        file_id = int(row["file_id"])
-        sequence_id = int(row["sequence_id"])
+    # Scale: normalize by max absolute x/y across all frames & landmarks
+    max_val = max(np.abs(xs).max(), np.abs(ys).max())
+    if max_val > 1e-6:
+        xs /= max_val
+        ys /= max_val
+        zs /= max_val
 
-        parquet_path = os.path.join(self.landmarks_dir, f"{file_id}.parquet")
-        if not os.path.exists(parquet_path):
-            # If parquet missing, mark sample invalid
-            return None
-
-        X_raw = read_right_hand_sequence(parquet_path, sequence_id)  # (T, D)
-        input_len = count_valid_frames(X_raw)
-
-        X = normalize_frames(X_raw, self.max_frames)
-        X = np.nan_to_num(X, nan=0.0)  # model can't handle NaNs
-
-        Y = torch.tensor(row["encoded"], dtype=torch.long)
-        target_len = int(len(Y))
-
-        # CTC requirement: input_len >= target_len (very strict when input_len small)
-        if input_len < target_len or target_len == 0:
-            return None
-
-        X = torch.tensor(X, dtype=torch.float32)
-        return X, Y, int(min(input_len, self.max_frames)), target_len
+    return np.concatenate([xs, ys, zs], axis=1)  # (T, 63)
 
 def collate_fn(batch):
     batch = [b for b in batch if b is not None]
