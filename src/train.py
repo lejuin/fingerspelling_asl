@@ -388,8 +388,6 @@ def main():
         writer.add_scalar("diag/input_target_len_ratio", mean_in_tar_ratio, epoch)
         print(f"Epoch {epoch + 1}: train loss={mean_train_loss:.4f}")
 
-        scheduler.step(mean_train_loss)
-
         metrics_train = None
         if args.eval_train_metrics:
             metrics_train = evaluate_metrics(
@@ -419,6 +417,11 @@ def main():
         writer.add_scalar("sequence_accuracy/val", metrics_val["sequence_accuracy"], epoch)
         writer.add_scalar("avg_edit_distance/val", metrics_val["avg_edit_distance"], epoch)
 
+        current_lr = optimizer.param_groups[0]['lr']
+        writer.add_scalar("learning_rate", current_lr, epoch)
+        scheduler.step(metrics_val["loss"])
+        #scheduler.step(metrics_val["cer"])
+
         if wandb_enabled:
             payload = {
                 "epoch": epoch + 1,
@@ -431,6 +434,7 @@ def main():
                 "sequence_accuracy/val": metrics_val["sequence_accuracy"],
                 "avg_edit_distance/val": metrics_val["avg_edit_distance"],
                 "global_step": global_step,
+                "lr": current_lr,
             }
             if metrics_train is not None:
                 payload.update(
@@ -453,6 +457,7 @@ def main():
             )
         print(
             f"Epoch {epoch + 1}: "
+            f"lr={current_lr:.4f} | "
             f"diag blank_ratio_pred={mean_blank_ratio:.4f} | "
             f"input/target ratio={mean_in_tar_ratio:.2f}"
         )
