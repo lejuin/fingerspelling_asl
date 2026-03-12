@@ -17,6 +17,11 @@ try:
 except ImportError:
     wandb = None
 
+try:
+    from clearml import Task
+except ImportError:
+    Task = None
+
 from src.data.dataset import ASLRightHandDataset, collate_fn
 from src.data.vocab import build_ctc_vocab, encode_phrase
 from src.models.embedded_rnn import EmbeddedRNN
@@ -170,6 +175,7 @@ def main():
     p.add_argument(
         "--rnn_type", type=str, default="lstm", choices=["lstm", "gru", "rnn"]
     )
+    p.add_argument("--num_workers", type=int, default=2, help="DataLoader worker processes for parallel data loading")
     p.add_argument("--val_ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_size", type=int, default=200)  # small by default
@@ -213,6 +219,16 @@ def main():
     )
 
     args = p.parse_args()
+
+    # ClearML experiment tracking & queue integration
+    # Appends short task ID to run_name to prevent checkpoint overwrites across runs
+    if Task is not None:
+        _task = Task.init(
+            project_name="fingerspelling_asl",
+            task_name=args.run_name or "train",
+            task_type=Task.TaskTypes.training,
+        )
+        args.run_name = f"{args.run_name or 'train'}_{_task.id[:8]}"
 
     train_csv = args.train_csv
     if not os.path.isabs(train_csv):
@@ -354,20 +370,9 @@ def main():
         training=False,
     )
 
-    train_loader = DataLoader(
-        train_ds,
-        batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=collate_fn,
-        num_workers=0,
-    )
-    val_loader = DataLoader(
-        val_ds,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=collate_fn,
-        num_workers=0,
-    )
+    use_cuda = device.type == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn, num_workers=args.num_workers, pin_memory=use_cuda, persistent_workers=args.num_workers > 0)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn, num_workers=args.num_workers, pin_memory=use_cuda, persistent_workers=args.num_workers > 0)
 
     # Model — 63 landmarks + 63 delta features = 126
     input_dim = 126
