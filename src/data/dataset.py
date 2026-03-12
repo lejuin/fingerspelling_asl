@@ -54,6 +54,27 @@ def count_valid_frames(X: np.ndarray) -> int:
     # A frame is valid if not all values are NaN
     return int(np.sum(~np.all(np.isnan(X), axis=1)))
 
+def create_filtered_landmark_file(parquet_path: str, output_dir: str, sequence_ids: List[int]):
+    """
+    Create a new parquet file containing only the specified sequence_ids, and only the right hand columns. 
+    This is a preprocessing step to speed up training by reducing file size and adding useful metadata.
+    """
+    # Determine which columns we want before reading the data so we can pass them
+    # directly to Arrow.  This avoids loading unnecessary columns at all.
+    right_hand_cols = _get_right_hand_cols(parquet_path)
+    desired_cols = right_hand_cols + ["sequence_id", "file_id"]
+
+    # Read only the requested sequences and columns via parquet filters and column list.
+    table = pq.read_table(
+        parquet_path,
+        filters=[("sequence_id", "in", sequence_ids)],
+        columns=desired_cols,
+    )
+
+    output_path = os.path.join(output_dir, os.path.basename(parquet_path))
+    os.makedirs(output_dir, exist_ok=True)
+    pq.write_table(table, output_path)
+
 def normalize_frames(X: np.ndarray, max_frames: int) -> np.ndarray:
     """
     Pad/truncate to fixed length, keeping NaNs as-is for valid-frame counting.
