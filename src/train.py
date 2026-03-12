@@ -56,6 +56,93 @@ def parse_wandb_tags(tags_raw: str):
     tags = [t.strip() for t in tags_raw.split(",") if t.strip()]
     return tags if tags else None
 
+def load_metadata_dataframe(
+    train_csv: str, 
+    landmarks_dir: str,
+    data_dir: str,
+    use_supplemental: bool) -> pd.DataFrame:
+    """
+    Loads trains.csv, checks for required columns, filters to available parquet files, 
+    and optionally appends supplemental data.
+    """
+    df = pd.read_csv(train_csv)
+    required_cols = {"file_id", "sequence_id", "participant_id", "phrase"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"train.csv is missing columns: {missing}")
+
+    # Filter by parquets you actually downloaded
+    have_ids = existing_file_ids(landmarks_dir)
+    if not have_ids:
+        raise ValueError(
+            f"No parquet files found in {landmarks_dir}. "
+            f"Download a few like 0.parquet, 1.parquet, etc."
+        )
+    df = df[df["file_id"].isin(have_ids)].copy()
+    print(f"Rows after filtering to available parquets ({len(have_ids)} file_ids): {len(df)}")
+
+    if use_supplemental:
+        supp_csv = os.path.join(data_dir, "supplemental_metadata.csv")
+        supp_landmarks = os.path.join(data_dir, "supplemental_landmarks")
+        if os.path.exists(supp_csv) and os.path.isdir(supp_landmarks):
+            supp_df = pd.read_csv(supp_csv)
+            supp_have = existing_file_ids(supp_landmarks)
+            supp_df = supp_df[supp_df["file_id"].isin(supp_have)].copy()
+            supp_df["_landmarks_dir"] = supp_landmarks
+            print(f"Supplemental rows: {len(supp_df)} ({len(supp_have)} file_ids)")
+            df["_landmarks_dir"] = landmarks_dir
+            df = pd.concat([df, supp_df], ignore_index=True)
+            print(f"Combined total rows: {len(df)}")
+        else:
+            print(f"Warning: supplemental data not found at {supp_csv}, skipping")
+    return df
+
+def filter_metadata_dataframe(
+    df: pd.DataFrame, # metadata dataframe, ie. train_csv and supplemental_metadata if loaded
+    landmarks_dir: str,
+    max_phrase_len: int
+) -> pd.DataFrame:
+    """Clean the training metadata.
+    - removes non-letter phrases
+    - removes sequences with no right-hand landmarks
+    - optionally applies max_phrase_len cutoff
+
+    Returns a filtered dataframe ready for splitting/encoding.
+    """
+    _clean_re = re.compile(r'^[a-z ]+$')
+    df["phrase"] = df["phrase"].astype(str).str.lower().str.strip()
+    df = df[df["phrase"].apply(lambda x: bool(_clean_re.match(x)) and len(x) > 0)].copy()
+    print(f"Rows after filtering to letters-only phrases: {len(df)}")
+
+    # Pre-filter: remove sequences with no right-hand data (all NaN).
+    # These are left-hand signers or detection failures — waste of training time.
+    from src.data.dataset import read_right_hand_sequence, count_valid_frames
+    print("Pre-filtering sequences with no right-hand landmarks...")
+    valid_mask = []
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Checking landmarks", leave=False):
+        fid = int(row["file_id"])
+        sid = int(row["sequence_id"])
+        lm_dir = landmarks_dir
+        if "_landmarks_dir" in row.index:
+            lm_dir = row["_landmarks_dir"]
+        ppath = os.path.join(lm_dir, f"{fid}.parquet")
+        if not os.path.exists(ppath):
+            valid_mask.append(False)
+            continue
+        X_raw = read_right_hand_sequence(ppath, sid)
+        n_valid = count_valid_frames(X_raw)
+        valid_mask.append(n_valid > 0)
+    df = df[valid_mask].copy()
+    print(f"Rows after filtering no-data sequences: {len(df)}")
+
+    if max_phrase_len > 0:
+        df = df[df["phrase"].astype(str).str.len() <= max_phrase_len].copy()
+        print(f"Rows after filtering by max_phrase_len={max_phrase_len}: {len(df)}")
+        if len(df) == 0:
+            raise ValueError("No rows left after max_phrase_len filtering.")
+
+    return df
+
 
 def collect_gt_pred_examples(
     model,
@@ -204,69 +291,19 @@ def main():
     # Load vocab mapping (char -> id) in CTC-compatible form
     letter_to_int, int_to_letter, blank_id = build_ctc_vocab(vocab_json)
 
-    # Load train.csv
-    df = pd.read_csv(train_csv)
-    required_cols = {"file_id", "sequence_id", "participant_id", "phrase"}
-    missing = required_cols - set(df.columns)
-    if missing:
-        raise ValueError(f"train.csv is missing columns: {missing}")
-
-    # Filter by parquets you actually downloaded
-    have_ids = existing_file_ids(landmarks_dir)
-    if not have_ids:
-        raise ValueError(
-            f"No parquet files found in {landmarks_dir}. "
-            f"Download a few like 0.parquet, 1.parquet, etc."
-        )
-    df = df[df["file_id"].isin(have_ids)].copy()
-    print(f"Rows after filtering to available parquets ({len(have_ids)} file_ids): {len(df)}")
-
-    if args.use_supplemental:
-        supp_csv = os.path.join(args.data_dir, "supplemental_metadata.csv")
-        supp_landmarks = os.path.join(args.data_dir, "supplemental_landmarks")
-        if os.path.exists(supp_csv) and os.path.isdir(supp_landmarks):
-          supp_df = pd.read_csv(supp_csv)
-          supp_have = existing_file_ids(supp_landmarks)
-          supp_df = supp_df[supp_df["file_id"].isin(supp_have)].copy()
-          supp_df["_landmarks_dir"] = supp_landmarks
-          print(f"Supplemental rows: {len(supp_df)} ({len(supp_have)} file_ids)")
-          df["_landmarks_dir"] = landmarks_dir
-          df = pd.concat([df, supp_df], ignore_index=True)
-          print(f"Combined total rows: {len(df)}")
-        else:
-          print(f"Warning: supplemental data not found at {supp_csv}, skipping")
-
-    _clean_re = re.compile(r'^[a-z ]+$')
-    df["phrase"] = df["phrase"].astype(str).str.lower().str.strip()
-    df = df[df["phrase"].apply(lambda x: bool(_clean_re.match(x)) and len(x) > 0)].copy()
-    print(f"Rows after filtering to letters-only phrases: {len(df)}")
-
-    # Pre-filter: remove sequences with no right-hand data (all NaN).
-    # These are left-hand signers or detection failures — waste of training time.
-    from src.data.dataset import read_right_hand_sequence, count_valid_frames
-    print("Pre-filtering sequences with no right-hand landmarks...")
-    valid_mask = []
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="Checking landmarks", leave=False):
-        fid = int(row["file_id"])
-        sid = int(row["sequence_id"])
-        lm_dir = landmarks_dir
-        if "_landmarks_dir" in row.index:
-            lm_dir = row["_landmarks_dir"]
-        ppath = os.path.join(lm_dir, f"{fid}.parquet")
-        if not os.path.exists(ppath):
-            valid_mask.append(False)
-            continue
-        X_raw = read_right_hand_sequence(ppath, sid)
-        n_valid = count_valid_frames(X_raw)
-        valid_mask.append(n_valid > 0)
-    df = df[valid_mask].copy()
-    print(f"Rows after filtering no-data sequences: {len(df)}")
-
-    if args.max_phrase_len > 0:
-        df = df[df["phrase"].astype(str).str.len() <= args.max_phrase_len].copy()
-        print(f"Rows after filtering by max_phrase_len={args.max_phrase_len}: {len(df)}")
-        if len(df) == 0:
-            raise ValueError("No rows left after max_phrase_len filtering.")
+    # apply all the train-specific filters and return the cleaned DataFrame
+    df = load_metadata_dataframe(
+        train_csv=train_csv,
+        landmarks_dir=landmarks_dir,
+        data_dir=args.data_dir,
+        use_supplemental=args.use_supplemental
+    )
+    df = filter_metadata_dataframe(
+        df,
+        landmarks_dir=landmarks_dir,
+        max_phrase_len=args.max_phrase_len,
+        seed=args.seed,
+    )
 
     if args.overfit_subset > 0:
         n_subset = min(args.overfit_subset, len(df))
