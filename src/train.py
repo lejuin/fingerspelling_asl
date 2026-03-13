@@ -565,8 +565,8 @@ def main():
         )
 
         # Save best checkpoint (by val CER)
-        if metrics["cer"] < best_val_cer:
-            best_val_cer = metrics["cer"]
+        if metrics_val["cer"] < best_val_cer:
+            best_val_cer = metrics_val["cer"]
             epochs_without_improvement = 0
             ckpt_path = os.path.join("artifacts", "models", f"{run_name}_best.pt")
             os.makedirs(os.path.dirname(ckpt_path), exist_ok=True)
