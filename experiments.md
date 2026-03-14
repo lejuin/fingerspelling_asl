@@ -2,16 +2,17 @@
 
 | Run Name | Date | Model | Epochs | Batch Size | LR | Hidden Dim | Proj Dim | RNN Layers | Dropout | Train Size | Val Size | Early Stop | Exec Time (h) | Best val CER | Best val WER | Epoch @ Best | Notes | W&B Run Name |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| clearml-l4-merge | 2026-03-13 | lstm | 45 | 256 | 1e-3 | 512 | 256 | 3 | 0.5 | 50000 | 50000 | no | — | 1.0 | 1.0 | 1 | train_size cap limited real data to ~8k rows; LR too aggressive; Merge latest changes from team | clearml-l4-merge_76fe7a1e |
-| clearml-l4-full-data-45epochs | 2026-03-13 | lstm | 45 | 64 | 1e-4 | 512 | 256 | 3 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | 2.6 | 0.612 | 1.014 | 45 | Full data, 45 epochs; CER plateaued, WER >1; params revised | clearml-l4-merge-params-fix-45epochs_e8cef390 |
-| clearml-l4-merge-full-data-75epochs | 2026-03-13 | lstm | 75 | 64 | 1e-4 | 512 | 256 | 2 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | — | — | — | — | Full dataset, in progress; Improved FP16 on GPU | clearml-l4-full-data-75epochs |
-| bilstm-supplemental | — | bilstm | 150 | 64 | 1e-3 | 512 | 256 | 3 | 0.3 | 0 (all) | 0 (all) | yes (p=20) | — | — | — | — | BiLSTM + supplemental data; suggestions #2 and #4 | — |
+| clearml-l4-merge | 2026-03-13 | bilstm | 45 | 256 | 1e-3 | 512 | 256 | 3 | 0.5 | 50000 | 50000 | no | — | 1.0 | 1.0 | 1 | train_size cap limited real data to ~8k rows; LR too aggressive; Merge latest changes from team | clearml-l4-merge_76fe7a1e |
+| clearml-l4-full-data-45epochs | 2026-03-13 | bilstm | 45 | 64 | 1e-4 | 512 | 256 | 3 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | 2.6 | 0.612 | 1.014 | 45 | Full data, 45 epochs; CER plateaued, WER >1; params revised | clearml-l4-merge-params-fix-45epochs_e8cef390 |
+| clearml-l4-merge-full-data-75epochs | 2026-03-13 | bilstm | 75 | 64 | 1e-4 | 512 | 256 | 2 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | — | — | — | — | Full dataset, Improved FP16 on GPU | clearml-l4-full-data-75epochs |
+| clearml-l4-full-data-75epochs-nodrop | 2026-03-14 | bilstm | 75 | 64 | 1e-4 | 512 | 128 | 2 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | No dropout, full data; in progress | clearml-l4-full-data-75epochs-nodrop |
 
 ---
 
 ## Notes / Suggestions
 
-### Mixed Precision Training (`torch.amp`) — Suggestion #6
+
+### Mixed Precision Training (`torch.amp`) — Suggestion Implemented in experiment #3 onwards...
 Adding mixed precision (FP16) to the training loop would yield ~2x speedup on the NVIDIA L4 with no impact on model quality. This is a code change, not a hyperparameter change, so it applies to all future runs. Implementation:
 
 ```python
@@ -25,5 +26,33 @@ scaler.scale(loss).backward()
 scaler.step(optimizer)
 scaler.update()
 ```
+**Expected result:** This would halve experiment execution time (from ~2.6h to ~1.3h), allowing faster iteration across runs.
 
-This would halve experiment execution time (from ~2.6h to ~1.3h), allowing faster iteration across runs.
+---
+
+### Model Selection via `--model` flag (TODO)
+
+Currently `train.py` always uses `EmbeddedRNN` (hardcoded BiLSTM). `TCNBiRNN` exists in `src/models/tcn_bilstm.py` but is never instantiated. The args `--rnn_type`, `--rnn_layers`, `--proj_dim`, and `--tcn_kernels` are parsed but have no effect.
+
+**Changes needed:**
+
+1. **`src/models/tcn_bilstm.py`** — add `input_lengths=None` to `forward()` and use `pack_padded_sequence` (same pattern as `EmbeddedRNN`) so it's compatible with the training loop.
+
+2. **`src/train.py`** — add `--model` arg and wire up selection:
+```python
+p.add_argument("--model", type=str, default="embedded_rnn", choices=["embedded_rnn", "tcn_bilstm"])
+```
+```python
+if args.model == "tcn_bilstm":
+    tcn_kernels = tuple(int(k) for k in args.tcn_kernels.split(","))
+    model = TCNBiRNN(
+        input_dim, args.proj_dim, tcn_kernels,
+        args.hidden_dim, args.rnn_layers, args.rnn_type, output_dim
+    ).to(device)
+else:
+    model = EmbeddedRNN(
+        input_dim, args.hidden_dim, output_dim, dropout=args.dropout
+    ).to(device)
+```
+
+Once implemented, a natural next experiment would be comparing `--model tcn_bilstm --rnn_type lstm` vs the current `embedded_rnn` baseline on the same data split.
