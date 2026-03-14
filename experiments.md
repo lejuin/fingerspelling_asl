@@ -6,6 +6,7 @@
 | clearml-l4-full-data-45epochs | 2026-03-13 | bilstm | 45 | 64 | 1e-4 | 512 | 256 | 3 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | 2.6 | 0.612 | 1.014 | 45 | Full data, 45 epochs; CER plateaued, WER >1; params revised | clearml-l4-merge-params-fix-45epochs_e8cef390 |
 | clearml-l4-merge-full-data-75epochs | 2026-03-13 | bilstm | 75 | 64 | 1e-4 | 512 | 256 | 2 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | — | — | — | — | Full dataset, Improved FP16 on GPU | clearml-l4-full-data-75epochs |
 | clearml-l4-full-data-100epochs-nodrop | 2026-03-14 | bilstm | 100 | 64 | 1e-4 | 512 | 128 | 2 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | No dropout, full data; scheduler on cer; in progress | clearml-l4-full-data-100epochs-nodrop |
+| clearml-l4-weight-decay-1e4 | — | bilstm | 100 | 64 | 1e-4 | 512 | 256 | 3 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | L2 weight_decay=1e-4, no dropout; first regularization test | PENDING |
 
 ---
 
@@ -46,6 +47,23 @@ Merged from `irreyes1/main` (author: Pau Vila). The intended change was:
 - **`scheduler.step(metrics_val["cer"])`** replaces `scheduler.step(metrics_val["loss"])` — `ReduceLROnPlateau` now reduces LR when val CER stops improving instead of val loss. This is a better signal since CER is the actual evaluation metric.
 
 **Expected result:** CTC loss can decrease while CER stays flat or worsens — the model may be learning to distribute probability mass more smoothly without actually producing better character sequences. Monitoring CER directly ensures the LR is reduced when what we actually care about stops improving.
+
+---
+
+### L2 Regularization via `--weight_decay` (experiment `clearml-l4-weight-decay-1e4`)
+
+`weight_decay` is fully implemented in `train.py:387` and passed to Adam. However, all previous runs used `weight_decay=0`, so regularization has never been tested.
+
+**How it works:** L2 adds a penalty proportional to the squared magnitude of all weights, nudging each parameter slightly toward zero on every update. In Adam this is equivalent to multiplying each weight by `(1 - lr * weight_decay)` before the gradient step.
+
+**Why it may help here:** past runs show CER plateauing early (0.612 at epoch 45). Large LSTM gate weights can saturate tanh/sigmoid activations → vanishing gradients → training stalls. Weight decay keeps weights small and gradients flowing.
+
+**CLI flag:**
+```bash
+--weight_decay 1e-4
+```
+
+**Expected result:** Lower final CER compared to `weight_decay=0` baseline (exp #4), especially in later epochs where CER was flat. Typical safe range: `1e-5` to `1e-3`.
 
 ---
 
