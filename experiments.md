@@ -5,7 +5,7 @@
 | clearml-l4-merge | 2026-03-13 | bilstm | 45 | 256 | 1e-3 | 512 | 256 | 3 | 0.5 | 50000 | 50000 | no | — | 1.0 | 1.0 | 1 | train_size cap limited real data to ~8k rows; LR too aggressive; Merge latest changes from team | clearml-l4-merge_76fe7a1e |
 | clearml-l4-full-data-45epochs | 2026-03-13 | bilstm | 45 | 64 | 1e-4 | 512 | 256 | 3 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | 2.6 | 0.612 | 1.014 | 45 | Full data, 45 epochs; CER plateaued, WER >1; params revised | clearml-l4-merge-params-fix-45epochs_e8cef390 |
 | clearml-l4-merge-full-data-75epochs | 2026-03-13 | bilstm | 75 | 64 | 1e-4 | 512 | 256 | 2 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | — | — | — | — | Full dataset, Improved FP16 on GPU | clearml-l4-full-data-75epochs |
-| clearml-l4-full-data-75epochs-nodrop | 2026-03-14 | bilstm | 75 | 64 | 1e-4 | 512 | 128 | 2 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | No dropout, full data; in progress | clearml-l4-full-data-75epochs-nodrop |
+| clearml-l4-full-data-100epochs-nodrop | 2026-03-14 | bilstm | 100 | 64 | 1e-4 | 512 | 128 | 2 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | No dropout, full data; scheduler on cer; in progress | clearml-l4-full-data-100epochs-nodrop |
 
 ---
 
