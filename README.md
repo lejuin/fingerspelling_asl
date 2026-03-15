@@ -320,6 +320,9 @@ python -m src.quick_infer \
 ---
 
 ## References
+- *Google ASL Dataset: https://www.kaggle.com/competitions/asl-fingerspelling/data*
+
+- *Kaggle Notebook: https://www.kaggle.com/code/sscalzadonnaupc/notebook136616d653-v12-landmarks*
 
 - *W&B Workspace report: https://wandb.ai/inaki-rodriguez-reyes-upc-universidad-peruana-de-ciencia/fingerspelling_asl*
 
