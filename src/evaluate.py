@@ -187,8 +187,10 @@ def main():
     print("===================================\n")
 
     if args.n_examples > 0:
-        print(f"Sample predictions (first {min(args.n_examples, len(preds))}):")
-        for gt, pred in zip(targets[: args.n_examples], preds[: args.n_examples]):
+        sorted_pairs = sorted(zip(targets, preds), key=lambda x: len(x[0]))
+        n = min(args.n_examples, len(sorted_pairs))
+        print(f"Sample predictions ({n} shortest GT sequences):")
+        for gt, pred in sorted_pairs[:n]:
             status = "✓" if gt == pred else "✗"
             print(f"  [{status}] GT: {gt!r:30s}  PRED: {pred!r}")
 
