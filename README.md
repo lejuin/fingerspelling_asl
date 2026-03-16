@@ -141,7 +141,7 @@ The original dataset contains a significant number of phrases with digits, punct
 
 ### 3.2 Problem Formulation
 
-Before writing any model code, the first step was to understand the structure of the data and commit to a technical approach. This analysis — documented in our [Kaggle notebook series](https://www.kaggle.com/code/sscalzadonnaupc/notebook136616d653v8-annotated) — shaped every design decision that followed.
+Before writing any model code, the first step was to understand the structure of the data and commit to a technical approach. This analysis — documented in our [Kaggle notebook series](https://www.kaggle.com/code/sscalzadonnaupc/notebook136616d653-v12-landmarks) — shaped every design decision that followed.
 
 **Key observations from the dataset:**
 - There are no frame-level annotations. Each sample is labeled at the level of a full phrase, not individual letters.
