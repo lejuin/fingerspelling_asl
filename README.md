@@ -28,8 +28,8 @@
   - [4. Experiments](#4-experiments)
     - [Experiment 1 — Baseline RNN](#experiment-1--baseline-rnn)
     - [Experiment 2 — Architecture Comparison](#experiment-2--architecture-comparison)
-    - [Experiment 3 — TCN+BiLSTM Hyperparameter Tuning](#experiment-3--tcnbilstm-hyperparameter-tuning)
-    - [Test Phase — Best Model Evaluation (TCN+BiLSTM v3)](#test-phase--best-model-evaluation-tcnbilstm-v3)
+    - [Experiment 3 — BiLSTM Hyperparameter Tuning](#experiment-3--bilstm-hyperparameter-tuning)
+    - [Test Phase — Best Model Evaluation (BiLSTM v3)](#test-phase--best-model-evaluation-bilstm-v3)
   - [5. Next Steps](#5-next-steps)
   - [6. Final Thoughts](#6-final-thoughts)
   - [7. How to Run](#7-how-to-run)
@@ -184,8 +184,8 @@ We evaluated four architectures, progressing from a simple recurrent baseline to
 **RNN (Baseline)**
 A simple single-direction RNN with a linear input projection layer. Architecture: `Linear(126→128) → RNN(128, 1 layer) → Linear(60) → LogSoftmax`. This model captures basic temporal dependencies and establishes the performance floor. Its simplicity makes it useful for diagnosing data quality issues, gradient instability, and coordinate system problems before committing to more complex models.
 
-**TCN + BiLSTM**
-A two-stage hybrid model. First, a stack of Temporal Convolutional Network (TCN) blocks with dilated convolutions extracts local temporal patterns at multiple timescales. The TCN output is then processed by a Bidirectional LSTM, which reads the sequence in both forward and backward directions to provide each timestep with full context from the entire sequence. This combination is well-suited for fingerspelling: the TCN captures the finger shape transitions between adjacent frames, while the BiLSTM handles word-level temporal structure.
+**BiLSTM**
+A Bidirectional LSTM that reads the sequence in both forward and backward directions, providing each timestep with full context from the entire sequence. This architecture is well-suited for fingerspelling: the bidirectional pass allows the model to use future context when predicting each character, capturing the transitions and co-articulation effects that occur across frames.
 
 **Transformer**
 A standard encoder-only Transformer using multi-head self-attention. Self-attention can theoretically model any pairwise dependency between frames, regardless of distance, making it appealing for long fingerspelled phrases. However, Transformers are data-hungry and typically need significantly more training examples and epochs to learn useful representations from scratch.
@@ -289,7 +289,7 @@ The baseline was developed iteratively across several Kaggle notebooks: initial 
 **Hypothesis:** More expressive architectures — particularly those that combine local feature extraction with bidirectional context — will outperform the simple RNN. Transformer-based models may struggle under our data and compute constraints.
 
 **Setup:**
-All four architectures (RNN, TCN+BiLSTM, Transformer, Conformer) were trained under the same conditions to enable a fair comparison:
+All four architectures (RNN, BiLSTM, Transformer, Conformer) were trained under the same conditions to enable a fair comparison:
 - Dataset: Same 3k-sequence subset for initial comparison
 - Epochs: 20, Batch size: 16, LR: 5e-4
 
@@ -298,18 +298,18 @@ All four architectures (RNN, TCN+BiLSTM, Transformer, Conformer) were trained un
 | Architecture    | Train Loss | Val CER | Notes                              |
 |-----------------|------------|---------|------------------------------------|
 | RNN             | 2.1        | 0.70    | Stable training, limited capacity  |
-| TCN + BiLSTM    | **1.6**    | **0.60**| Best performance, stable convergence|
+| BiLSTM    | **1.6**    | **0.60**| Best performance, stable convergence|
 | Conformer       | 3.1        | 0.90    | Early stopping, emits many blanks  |
 | Transformer     | 3.2        | 1.00    | Early stopping, fails to converge  |
 
 **Conclusions:**
-TCN+BiLSTM is the clear winner in this constrained setting. The combination of dilated convolutions for local pattern extraction and bidirectional LSTM for sequence-level context provides the best balance of capacity and data efficiency. The RNN remains a functional baseline. Both the Transformer and Conformer trigger early stopping — they fail to reduce CER meaningfully within 20 epochs on the small subset. This is expected: attention-based models are known to require more data and longer training to stabilize. Their underperformance here is not a reflection of their true capability, but rather of the resource constraints of this study. TCN+BiLSTM was selected as the architecture to optimize in Experiment 3.
+BiLSTM is the clear winner in this constrained setting. The combination of dilated convolutions for local pattern extraction and bidirectional LSTM for sequence-level context provides the best balance of capacity and data efficiency. The RNN remains a functional baseline. Both the Transformer and Conformer trigger early stopping — they fail to reduce CER meaningfully within 20 epochs on the small subset. This is expected: attention-based models are known to require more data and longer training to stabilize. Their underperformance here is not a reflection of their true capability, but rather of the resource constraints of this study. BiLSTM was selected as the architecture to optimize in Experiment 3.
 
 ---
 
-### Experiment 3 — TCN+BiLSTM Hyperparameter Tuning
+### Experiment 3 — BiLSTM Hyperparameter Tuning
 
-**Hypothesis:** The TCN+BiLSTM architecture has not yet reached its performance ceiling. Increasing training data, model capacity, and training duration should yield substantial further improvements in CER.
+**Hypothesis:** The BiLSTM architecture has not yet reached its performance ceiling. Increasing training data, model capacity, and training duration should yield substantial further improvements in CER.
 
 **Setup:**
 Three configurations were compared progressively:
@@ -343,12 +343,12 @@ The model handles short, common phrases well but still struggles with longer or 
 
 ---
 
-### Test Phase — Best Model Evaluation (TCN+BiLSTM v3)
+### Test Phase — Best Model Evaluation (BiLSTM v3)
 
-To measure real-world generalisation, the best checkpoint (epoch 34, TCN+BiLSTM v3) was evaluated on the **supplemental held-out test set** — a separate portion of the Google ASL dataset not seen during training or validation.
+To measure real-world generalisation, the best checkpoint (epoch 34, BiLSTM v3) was evaluated on the **supplemental held-out test set** — a separate portion of the Google ASL dataset not seen during training or validation.
 
 **Setup:**
-- Checkpoint: `best_ever.pt` (epoch 34, TCN+BiLSTM v3)
+- Checkpoint: `best_ever.pt` (epoch 34, BiLSTM v3)
 - Dataset: supplemental landmarks (53 parquet files → 4,413 usable sequences after filtering frames with no right-hand landmarks)
 - Evaluation script: `src/evaluate.py` running on the GCP VM
 
@@ -391,7 +391,7 @@ The current system is a working proof of concept. Several directions offer clear
 **Dataset & Feature Enrichment**
 - **Pairwise fingertip distances:** Computing the Euclidean distance between each pair of the 5 fingertips per frame would add 10 new features that explicitly encode the spatial relationship between fingers. This could help the model distinguish between letters that differ only in relative finger position (e.g., 'a' vs 'e').
 - **Vocabulary expansion:** The current model only handles lowercase letters and spaces. Expanding to include digits and punctuation would greatly increase practical applicability, at the cost of a larger output space and more training data requirements.
-- **Larger datasets:** The Transformer and Conformer architectures were clearly undertrained in our experiments. Training them on a significantly larger corpus (e.g., combining multiple ASL datasets) could unlock their potential and surpass the TCN+BiLSTM.
+- **Larger datasets:** The Transformer and Conformer architectures were clearly undertrained in our experiments. Training them on a significantly larger corpus (e.g., combining multiple ASL datasets) could unlock their potential and surpass the BiLSTM.
 
 **Architecture Improvements**
 - **Beam search + language model:** The test results show that space dropping is the dominant failure mode. Replacing greedy CTC decoding with beam search combined with a character-level language model would directly address word boundary errors and is likely the highest-impact single improvement.
@@ -399,7 +399,7 @@ The current system is a working proof of concept. Several directions offer clear
 - **Transformer with pretraining:** Fine-tuning a model pretrained on a large motion or gesture dataset would make attention-based architectures viable without requiring the large training corpus our experiments lacked.
 
 **Real-Time Inference**
-- The current webcam demo (`realtime_webcam_infer.py`) provides a working real-time pipeline using MediaPipe for landmark extraction and the trained TCN+BiLSTM checkpoint for recognition. Improving latency and robustness to different lighting conditions and hand orientations would be key for a deployable system.
+- The current webcam demo (`realtime_webcam_infer.py`) provides a working real-time pipeline using MediaPipe for landmark extraction and the trained BiLSTM checkpoint for recognition. Improving latency and robustness to different lighting conditions and hand orientations would be key for a deployable system.
 
 ---
 
@@ -407,7 +407,7 @@ The current system is a working proof of concept. Several directions offer clear
 
 This project delivered a complete ASL fingerspelling recognition pipeline — from raw hand landmark sequences to predicted text — built and iterated across a realistic MLOps stack (ClearML, W&B, Google Cloud, Kaggle, Lightning AI).
 
-Starting from a simple RNN that scored CER 0.70, we systematically explored four architectures, identified TCN+BiLSTM as the most effective under constrained resources, and reduced validation CER to **0.38** through dataset scaling and hyperparameter tuning. The held-out test evaluation further revealed that space detection is the clearest remaining bottleneck — a precise and actionable finding. Beyond the metrics, the project gave the team hands-on experience with the full lifecycle of a deep learning system: dataset curation, feature engineering for structured sequential data, CTC-based sequence modelling, multi-platform training infrastructure, and the practical tradeoffs between model capacity, data size, and compute budget.
+Starting from a simple RNN that scored CER 0.70, we systematically explored four architectures, identified BiLSTM as the most effective under constrained resources, and reduced validation CER to **0.38** through dataset scaling and hyperparameter tuning. The held-out test evaluation further revealed that space detection is the clearest remaining bottleneck — a precise and actionable finding. Beyond the metrics, the project gave the team hands-on experience with the full lifecycle of a deep learning system: dataset curation, feature engineering for structured sequential data, CTC-based sequence modelling, multi-platform training infrastructure, and the practical tradeoffs between model capacity, data size, and compute budget.
 
 The gap between our results and state-of-the-art fingerspelling systems is primarily a function of data and compute — not architecture design. The foundation is solid, and the failure modes are well understood. With beam search decoding, richer input features, and more training data, there is significant room to push CER well below 0.20 — approaching the level needed for real-world deployment.
 
@@ -470,7 +470,7 @@ fingerspelling_asl/
 ```bash
 cd fingerspelling_asl
 
-# Train the TCN+BiLSTM model (best configuration)
+# Train the BiLSTM model (best configuration)
 python -m src.train \
   --model lstm \
   --train_csv data/train.csv \
