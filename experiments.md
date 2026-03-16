@@ -5,8 +5,9 @@
 | clearml-l4-merge | 2026-03-13 | bilstm | 45 | 256 | 1e-3 | 512 | 0.5 | 50000 | 50000 | no | — | 1.0 | 1.0 | 1 | train_size cap limited real data to ~8k rows; LR too aggressive; Merge latest changes from team | clearml-l4-merge_76fe7a1e |
 | clearml-l4-full-data-45epochs | 2026-03-13 | bilstm | 45 | 64 | 1e-4 | 512 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | 2.6 | 0.612 | 1.014 | 45 | Full data, 45 epochs; CER plateaued, WER >1; params revised | clearml-l4-merge-params-fix-45epochs_e8cef390 |
 | clearml-l4-merge-full-data-75epochs | 2026-03-13 | bilstm | 75 | 64 | 1e-4 | 512 | 0.3 | 0 (all) | 0 (all) | yes (p=10) | — | — | — | — | Full dataset, Improved FP16 on GPU | clearml-l4-full-data-75epochs |
-| clearml-l4-full-data-100epochs-nodrop | 2026-03-14 | bilstm | 100 | 64 | 1e-4 | 512 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | No dropout, full data; scheduler on cer; in progress | clearml-l4-full-data-100epochs-nodrop |
-| clearml-l4-weight-decay-1e4 | — | bilstm | 100 | 64 | 1e-4 | 512 | 0 | 0 (all) | 0 (all) | yes (p=15) | — | — | — | — | L2 weight_decay=1e-4, no dropout; first regularization test | PENDING |
+| clearml-l4-full-data-100epochs-nodrop | 2026-03-14 | bilstm | 100 | 64 | 1e-4 | 512 | 0 | 0 (all) | 0 (all) | yes (p=15) | 10.6 | 0.471 | 0.985 | 100 | No dropout, full data; scheduler on CER; LR decayed to 3.125e-6 (5× reductions); CER improved vs dropout run | clearml-l4-full-data-100epochs-nodrop_202e8769 |
+| clearml-l4-weight-decay-1e4 | 2026-03-15 | bilstm | 100 | 128 | 1e-4 | 512 | 0 | 0 (all) | 0 (all) | yes (p=15) | 11.0 | 0.812 | 1.032 | 100 | L2 weight_decay=1e-4, 3 LSTM layers, batch=128; CER much worse than prev run (0.471); LR decayed to 7.8125e-7 (7× reductions); | clearml-l4-weight-decay-1e4_de9e11a2 |
+| clearml-l4-weight-decay-1e4-lrate-1e3 | 2026-03-16 | bilstm | 100 | 128 | 1e-3 | 512 | 0 | 0 (all) | 0 (all) | yes (p=15) | 5.8 | 0.402 | 0.917 | 53 | Best val CER across all runs; early stopping at epoch 53; LR decayed to 6.25e-5 (4× reductions); significant overfitting (train CER 0.117 vs val 0.402) | clearml-l4-weight-decay-1e4-lrate-1e3_8564e777 |
 
 ---
 
