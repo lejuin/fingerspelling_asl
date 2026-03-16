@@ -19,8 +19,7 @@ except ImportError:
 
 from src.data.dataset import ASLRightHandDataset, collate_fn
 from src.data.vocab import build_ctc_vocab, encode_phrase
-from src.models.embedded_rnn import EmbeddedRNN
-from src.models.tcn_bilstm import TCNBiRNN
+from src.models.tcn_bilstm import BiLSTM
 from src.utils.metrics import ctc_greedy_decode, evaluate_metrics
 
 
@@ -159,17 +158,6 @@ def main():
         help="Stop if val CER doesn't improve for N epochs (0=disabled)",
     )
     p.add_argument("--hidden_dim", type=int, default=256)
-    p.add_argument("--proj_dim", type=int, default=128)
-    p.add_argument(
-        "--tcn_kernels",
-        type=str,
-        default="3,3,3",
-        help="Comma-separated kernel sizes for TCN blocks",
-    )
-    p.add_argument("--rnn_layers", type=int, default=2)
-    p.add_argument(
-        "--rnn_type", type=str, default="lstm", choices=["lstm", "gru", "rnn"]
-    )
     p.add_argument("--val_ratio", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--train_size", type=int, default=200)  # small by default
@@ -373,7 +361,7 @@ def main():
     input_dim = 126
     output_dim = max(int_to_letter.keys()) + 1
 
-    model = EmbeddedRNN(
+    model = BiLSTM(
         input_dim, args.hidden_dim, output_dim, dropout=args.dropout
     ).to(device)
 
