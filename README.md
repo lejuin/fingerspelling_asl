@@ -134,7 +134,7 @@ We selected the **Google ASL Fingerspelling Competition dataset** from Kaggle, w
 
 Landmark data was extracted from raw video using the **MediaPipe holistic model**. Each Parquet file contains ~1,000 sequences with 1,629 spatial columns covering x, y, z coordinates for 543 landmarks across four types (`face`, `left_hand`, `pose`, `right_hand`). Not all frames have detectable hands — some sequences contain frames where MediaPipe failed to detect the hand entirely.
 
-**We use only the 21 right-hand landmarks.** This gives 63 raw features per frame (x, y, z per landmark). The z coordinate is discarded during preprocessing, as MediaPipe's holistic model is not fully trained to predict depth reliably, leaving 42 position features. Velocity features (frame-to-frame deltas) are then appended, giving **84 input features per frame** in practice.
+**We use only the 21 right-hand landmarks.** This gives 63 raw features per frame (x, y, z per landmark). Velocity features (frame-to-frame deltas) are concatenated to the position features, giving **126 input features per frame** (63 position + 63 velocity). Note: while MediaPipe's depth prediction is unreliable, z is retained as an input feature and left to the model to down-weight.
 
 Metadata is provided via `train.csv` and `supplemental_metadata.csv`, each with the following columns:
 
@@ -371,7 +371,7 @@ To measure real-world generalisation, the best checkpoint (epoch 34, BiLSTM v3) 
 
 #### Dataset split
 
-The split used for test is a distinct supplemental set which consists in a complete separate split of the [Google ASL Fingerspelling Competition dataset](https://www.kaggle.com/competitions/asl-fingerspelling/data) -> mostly of fingerspelled sentences.
+The supplemental test set is a distinct split of the [Google ASL Fingerspelling Competition dataset](https://www.kaggle.com/competitions/asl-fingerspelling/data) — consisting mostly of natural fingerspelled sentences.
 
 **Format:** Landmark data extracted from raw video using the MediaPipe holistic model. Each Parquet file contains ~1,000 sequences, with 1,629 spatial columns covering x, y, z coordinates for 543 landmarks across four types (`face`, `left_hand`, `pose`, `right_hand`). Not all frames have detectable hands — some sequences contain frames where MediaPipe failed to detect the hand entirely.
 
