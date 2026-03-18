@@ -296,8 +296,6 @@ Model checkpoints were automatically synced to a Google Cloud Storage bucket (`g
 
 The `task_id` suffix (first 8 chars of the ClearML task ID) ensures checkpoints from different runs of the same experiment never overwrite each other and can always be traced back to their ClearML task entry.
 
-![MLOps syncs](docs/images/mlops.png)
-
 ---
 
 ## 4. Experiments
